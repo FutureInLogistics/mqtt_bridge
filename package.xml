@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <package format="2">
-  <name>mqtt_bridge</name>
+  <name>mqtt_bridge_pkg</name>
   <version>0.2.1</version>
   <description>The mqtt_bridge package</description>
 
@@ -15,9 +15,11 @@
   <buildtool_depend>python3-setuptools</buildtool_depend>
 
   <build_depend>python3-pip</build_depend>
+  <build_depend>message_generation</build_depend>
   <exec_depend>rospy</exec_depend>
   <exec_depend>rosbridge_library</exec_depend>
   <exec_depend>std_msgs</exec_depend>
+  <exec_depend>message_runtime</exec_depend>
   <!--<exec_depend>python3-msgpack</exec_depend> -->
   <!--<exec_depend>python3-paho-mqtt</exec_depend> -->
   <exec_depend>python3-pymongo</exec_depend>

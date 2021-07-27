@@ -42,6 +42,7 @@ class RosToMqttBridge(Bridge):
     """
 
     def __init__(self, topic_from: str, topic_to: str, msg_type: rospy.Message, frequency: Optional[float] = None):
+        rospy.loginfo("Bridging ROS -> MQTT: " + topic_from + " ~~> " + topic_to)
         self._topic_from = topic_from
         self._topic_to = self._extract_private_path(topic_to)
         self._last_published = rospy.get_time()

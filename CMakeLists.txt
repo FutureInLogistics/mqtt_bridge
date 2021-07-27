@@ -1,10 +1,15 @@
 cmake_minimum_required(VERSION 3.0.2)
-project(mqtt_bridge)
+project(mqtt_bridge_pkg)
 
-find_package(catkin REQUIRED)
+find_package(catkin REQUIRED COMPONENTS message_generation std_msgs)
 catkin_python_setup()
-catkin_package()
 
+add_service_files(FILES
+  SubscribeMqtt.srv
+)
+generate_messages()
+
+catkin_package(CATKIN_DEPENDS message_runtime)
 
 install(PROGRAMS
   scripts/mqtt_bridge_node.py

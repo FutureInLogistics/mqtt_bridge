@@ -6,6 +6,9 @@ from .bridge import create_bridge
 from .mqtt_client import create_private_path_extractor
 from .util import lookup_object
 
+from mqtt_bridge_pkg.srv import SubscribeMqtt
+
+bridges = []
 
 def create_config(mqtt_client, serializer, deserializer, mqtt_private_path):
     if isinstance(serializer, str):
@@ -53,12 +56,14 @@ def mqtt_bridge_node():
     mqtt_client.connect(**conn_params)
 
     # configure bridges
-    bridges = []
     for bridge_args in bridge_params:
         bridges.append(create_bridge(**bridge_args))
 
     # start MQTT loop
     mqtt_client.loop_start()
+
+    # create service for dynamically creating new bridges in the future
+    rospy.Service('create_mqtt_bridge', SubscribeMqtt, _on_service_call)
 
     # register shutdown callback and spin
     rospy.on_shutdown(mqtt_client.disconnect)
@@ -73,5 +78,15 @@ def _on_connect(client, userdata, flags, response_code):
 def _on_disconnect(client, userdata, response_code):
     rospy.loginfo('MQTT disconnected')
 
+
+def _on_service_call(req):
+    try:
+        bridge = create_bridge("mqtt_bridge.bridge:MqttToRosBridge", req.msg_type, req.mqtt_topic, req.ros_topic)
+    except Exception as Err:
+        rospy.roserror(str(Err))
+        return False
+    else:
+        bridges.append(bridge)
+        return True
 
 __all__ = ['mqtt_bridge_node']
