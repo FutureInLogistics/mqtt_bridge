@@ -5,7 +5,8 @@ find_package(catkin REQUIRED COMPONENTS message_generation std_msgs)
 catkin_python_setup()
 
 add_service_files(FILES
-  SubscribeMqtt.srv
+  Subscribe.srv
+  Unsubscribe.srv
 )
 generate_messages()
 

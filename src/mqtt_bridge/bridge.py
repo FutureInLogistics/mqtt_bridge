@@ -47,7 +47,7 @@ class RosToMqttBridge(Bridge):
         self._topic_to = self._extract_private_path(topic_to)
         self._last_published = rospy.get_time()
         self._interval = 0 if frequency is None else 1.0 / frequency
-        rospy.Subscriber(topic_from, msg_type, self._callback_ros)
+        self._ros_subscriber = rospy.Subscriber(topic_from, msg_type, self._callback_ros)
 
     def _callback_ros(self, msg: rospy.Message):
         rospy.logdebug("ROS received from {}".format(self._topic_from))
