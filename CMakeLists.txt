@@ -5,8 +5,10 @@ find_package(catkin REQUIRED COMPONENTS message_generation std_msgs)
 catkin_python_setup()
 
 add_service_files(FILES
-  Subscribe.srv
-  Unsubscribe.srv
+  SyncTopic.srv
+  SyncTransform.srv
+  ConditionalSyncTransform.srv
+  Unsync.srv
 )
 generate_messages()
 

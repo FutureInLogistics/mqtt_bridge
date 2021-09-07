@@ -1,6 +1,6 @@
 string mqtt_topic
 string ros_topic
 string msg_type
-bool publish
+bool outgoing
 ---
 bool success

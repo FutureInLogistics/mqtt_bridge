@@ -6,7 +6,7 @@ from .bridge import create_bridge, MqttToRosBridge, RosToMqttBridge
 from .mqtt_client import create_private_path_extractor
 from .util import lookup_object
 
-from mqtt_bridge_pkg.srv import Subscribe, Unsubscribe
+from mqtt_bridge_pkg.srv import SyncTopic, SyncTransform, ConditionalSyncTransform, Unsync
 from std_msgs.msg import String
 
 bridges = []
@@ -64,8 +64,10 @@ def mqtt_bridge_node():
     mqtt_client.loop_start()
 
     # create service for dynamically creating new bridges in the future
-    rospy.Service('mqtt_bridge_subscribe', Subscribe, _on_subscribe)
-    rospy.Service('mqtt_bridge_unsubscribe', Unsubscribe, _on_unsubscribe)
+    rospy.Service('mqtt_bridge_sync_topic', SyncTopic, _on_sync_topic)
+    rospy.Service('mqtt_bridge_sync_transform', SyncTransform, _on_sync_transf)
+    rospy.Service('mqtt_bridge_sync_transform_cond', ConditionalSyncTransform, _on_sync_transf_cond)
+    rospy.Service('mqtt_bridge_unsync', Unsync, _on_unsync)
 
     # register shutdown callback and spin
     rospy.on_shutdown(mqtt_client.disconnect)
@@ -81,27 +83,69 @@ def _on_disconnect(client, userdata, response_code):
     rospy.loginfo('MQTT disconnected')
 
 
-def _on_subscribe(req):
-    """
-    Subscribe service callback function.
-    
-    This function creates a new MQTT->ROS or ROS->MQTT bridge, depending on the 
-    'publish' flag in the service request.
-    """
+def _create_bridge_ext(msg_type, ros_topic, mqtt_topic, outgoing, latch=False, condition=None):
     try:
-        if req.publish:
-            bridge = create_bridge("mqtt_bridge.bridge:RosToMqttBridge", req.msg_type, req.ros_topic, req.mqtt_topic)
+        if outgoing:
+            bridge = create_bridge("mqtt_bridge.bridge:RosToMqttBridge", 
+                msg_type=msg_type, 
+                topic_from=ros_topic,
+                topic_to=mqtt_topic, 
+                latch=latch, condition=condition)
         else:
-            bridge = create_bridge("mqtt_bridge.bridge:MqttToRosBridge", req.msg_type, req.mqtt_topic, req.ros_topic)
+            bridge = create_bridge("mqtt_bridge.bridge:MqttToRosBridge", 
+                msg_type=msg_type, 
+                topic_from=mqtt_topic, 
+                topic_to=ros_topic,
+                latch=latch)
     except Exception as Err:
-        rospy.roserror(str(Err))
+        rospy.roserr(str(Err))
         return False
     else:
         bridges.append(bridge)
         return True
 
 
-def _on_unsubscribe(req):
+def _on_sync_topic(req):
+    """
+    Topic Synchronization service callback function.
+    
+    This function creates a new MQTT->ROS or ROS->MQTT bridge, depending on the 
+    'outgoing' flag in the service request.
+
+    It supports no further arguments or options.
+    """
+    return _create_bridge_ext(req.msg_type, req.ros_topic, req.mqtt_topic, req.outgoing)
+    
+
+def _on_sync_transf(req):
+    """
+    Transform Synchronization service callback function.
+    
+    This function creates a new MQTT->ROS or ROS->MQTT bridge, depending on the 
+    'outgoing' flag in the service request.
+
+    It furthermore supports 'latched' messages: the last published message is saved
+    at the broker/master to be sent to any future subscriber - therefore allowing async pub-sub, 
+    which is required for static transforms.
+    """
+    return _create_bridge_ext(req.msg_type, req.ros_topic, req.mqtt_topic, req.outgoing, latch=req.latch)
+
+
+def _on_sync_transf_cond(req):
+    """
+    Conditional Transform Synchronization service callback function.
+
+    This function creates a new MQTT->ROS or ROS->MQTT bridge, depending on the 
+    'outgoing' flag in the service request.
+
+    In addition to 'latched' messages, it supports a condition, which frames should be published
+    to the broker. Note that the condition is only supported for outgoing messages.
+    """
+    return _create_bridge_ext(req.msg_type, req.ros_topic, req.mqtt_topic, req.outgoing, latch=req.latch, 
+        condition = lambda msg: all([tf.child_frame_id == req.child_frame_id for tf in msg.transforms])
+    )
+
+def _on_unsync(req):
     """
     Unsubscribe service callback function.
     The only parameter is the name of the MQTT or ROS topic to unsubscribe from, as String

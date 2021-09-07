@@ -41,10 +41,13 @@ class RosToMqttBridge(Bridge):
     bridge ROS messages on `topic_from` to MQTT topic `topic_to`. expect `msg_type` ROS message type.
     """
 
-    def __init__(self, topic_from: str, topic_to: str, msg_type: rospy.Message, frequency: Optional[float] = None):
+    def __init__(self, topic_from: str, topic_to: str, msg_type: rospy.Message, frequency: Optional[float] = None,
+                latch : bool = False, condition = None):
         rospy.loginfo("Bridging ROS -> MQTT: " + topic_from + " ~~> " + topic_to)
         self._topic_from = topic_from
         self._topic_to = self._extract_private_path(topic_to)
+        self._latch = latch
+        self._condition = condition
         self._last_published = rospy.get_time()
         self._interval = 0 if frequency is None else 1.0 / frequency
         self._ros_subscriber = rospy.Subscriber(topic_from, msg_type, self._callback_ros)
@@ -53,12 +56,13 @@ class RosToMqttBridge(Bridge):
         rospy.logdebug("ROS received from {}".format(self._topic_from))
         now = rospy.get_time()
         if now - self._last_published >= self._interval:
-            self._publish(msg)
-            self._last_published = now
+            if self._condition is None or self._condition(msg):
+                self._publish(msg)
+                self._last_published = now
 
     def _publish(self, msg: rospy.Message):
         payload = self._serialize(extract_values(msg))
-        self._mqtt_client.publish(topic=self._topic_to, payload=payload)
+        self._mqtt_client.publish(topic=self._topic_to, payload=payload, retain=self._latch)
 
 
 class MqttToRosBridge(Bridge):
@@ -68,18 +72,20 @@ class MqttToRosBridge(Bridge):
     """
 
     def __init__(self, topic_from: str, topic_to: str, msg_type: Type[rospy.Message],
-                 frequency: Optional[float] = None, queue_size: int = 10):
+                 frequency: Optional[float] = None, queue_size: int = 10, latch : bool = False):
+        rospy.loginfo("Bridging MQTT -> ROS: " + topic_from + " ~~> " + topic_to)
         self._topic_from = self._extract_private_path(topic_from)
         self._topic_to = topic_to
         self._msg_type = msg_type
         self._queue_size = queue_size
+        self._latch = latch
         self._last_published = rospy.get_time()
         self._interval = None if frequency is None else 1.0 / frequency
         # Adding the correct topic to subscribe to
         self._mqtt_client.subscribe(self._topic_from)
         self._mqtt_client.message_callback_add(self._topic_from, self._callback_mqtt)
         self._publisher = rospy.Publisher(
-            self._topic_to, self._msg_type, queue_size=self._queue_size)
+            self._topic_to, self._msg_type, queue_size=self._queue_size, latch=self._latch)
 
     def _callback_mqtt(self, client: mqtt.Client, userdata: Dict, mqtt_msg: mqtt.MQTTMessage):
         """ callback from MQTT """
@@ -89,6 +95,11 @@ class MqttToRosBridge(Bridge):
         if self._interval is None or now - self._last_published >= self._interval:
             try:
                 ros_msg = self._create_ros_message(mqtt_msg)
+
+                if self._topic_to == "/tf":
+                    for i in range(len(ros_msg.transforms)):
+                        ros_msg.transforms[i].header.stamp = rospy.Time.now()
+                        
                 self._publisher.publish(ros_msg)
                 self._last_published = now
             except Exception as e:

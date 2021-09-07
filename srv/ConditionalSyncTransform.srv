@@ -1,0 +1,9 @@
+string mqtt_topic
+string ros_topic
+string msg_type
+bool outgoing
+#http://wiki.ros.org/roscpp/Overview/Publishers%20and%20Subscribers#Publisher_Options
+bool latch
+string child_frame_id
+---
+bool success
