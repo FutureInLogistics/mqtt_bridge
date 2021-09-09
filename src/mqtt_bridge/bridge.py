@@ -72,7 +72,8 @@ class MqttToRosBridge(Bridge):
     """
 
     def __init__(self, topic_from: str, topic_to: str, msg_type: Type[rospy.Message],
-                 frequency: Optional[float] = None, queue_size: int = 10, latch : bool = False):
+                 frequency: Optional[float] = None, queue_size: int = 10, latch : bool = False,
+                 sync_to_clock : str = None):
         rospy.loginfo("Bridging MQTT -> ROS: " + topic_from + " ~~> " + topic_to)
         self._topic_from = self._extract_private_path(topic_from)
         self._topic_to = topic_to
@@ -86,6 +87,28 @@ class MqttToRosBridge(Bridge):
         self._mqtt_client.message_callback_add(self._topic_from, self._callback_mqtt)
         self._publisher = rospy.Publisher(
             self._topic_to, self._msg_type, queue_size=self._queue_size, latch=self._latch)
+        self._clock_diff = None
+
+        # Clock syncing option
+        if sync_to_clock != None and len(sync_to_clock) > 0:
+            def _calc_clock_diff(client: mqtt.Client, userdata: Dict, mqtt_msg: mqtt.MQTTMessage):
+                #if self._clock_diff != None:
+                #    return
+
+                # Calculate clock difference and save to instance attribute
+                clock_msg_type = lookup_object("rosgraph_msgs.msg:Clock")
+                clock_msg = self._create_ros_message(mqtt_msg, clock_msg_type)
+                self._clock_diff = rospy.Time.now() - clock_msg.clock
+                #rospy.loginfo("CLOCK SYNC: Calculated extern clock offset of %u.%u",
+                #    self._clock_diff.secs,
+                #    self._clock_diff.nsecs)
+
+                # Getting the clock diff once is enough, so unsubscribe
+                #self._mqtt_client.unsubscribe(sync_to_clock)
+
+            # Subscribe to clock of partner skid
+            self._mqtt_client.subscribe(sync_to_clock)
+            self._mqtt_client.message_callback_add(sync_to_clock, _calc_clock_diff)
 
     def _callback_mqtt(self, client: mqtt.Client, userdata: Dict, mqtt_msg: mqtt.MQTTMessage):
         """ callback from MQTT """
@@ -94,25 +117,36 @@ class MqttToRosBridge(Bridge):
 
         if self._interval is None or now - self._last_published >= self._interval:
             try:
-                ros_msg = self._create_ros_message(mqtt_msg)
+                ros_msg = self._create_ros_message(mqtt_msg, self._msg_type)
 
                 if self._topic_to == "/tf":
                     for i in range(len(ros_msg.transforms)):
-                        ros_msg.transforms[i].header.stamp = rospy.Time.now()
-                        
+                        if self._clock_diff != None:
+                            ros_msg.transforms[i].header.stamp += self._clock_diff + rospy.Duration.from_sec(0.01)
+
+                        # This transform needs to be inverted
+                        original_parent = ros_msg.transforms[i].header.frame_id
+                        original_child = ros_msg.transforms[i].child_frame_id 
+                        ros_msg.transforms[i].header.frame_id = original_child
+                        ros_msg.transforms[i].child_frame_id = original_parent                    
+
+                if self._clock_diff != None:
+                    if hasattr(ros_msg, "header"):
+                        ros_msg.header.stamp += self._clock_diff
+
                 self._publisher.publish(ros_msg)
                 self._last_published = now
             except Exception as e:
                 rospy.logerr(e)
 
-    def _create_ros_message(self, mqtt_msg: mqtt.MQTTMessage) -> rospy.Message:
+    def _create_ros_message(self, mqtt_msg: mqtt.MQTTMessage, msg_type : Type[rospy.Message]) -> rospy.Message:
         """ create ROS message from MQTT payload """
         # Hack to enable both, messagepack and json deserialization.
         if self._serialize.__name__ == "packb":
             msg_dict = self._deserialize(mqtt_msg.payload, raw=False)
         else:
             msg_dict = self._deserialize(mqtt_msg.payload)
-        return populate_instance(msg_dict, self._msg_type())
+        return populate_instance(msg_dict, msg_type())
 
 
 __all__ = ['create_bridge', 'Bridge', 'RosToMqttBridge', 'MqttToRosBridge']

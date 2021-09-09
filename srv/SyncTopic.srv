@@ -2,5 +2,6 @@ string mqtt_topic
 string ros_topic
 string msg_type
 bool outgoing
+string extern_clock
 ---
 bool success

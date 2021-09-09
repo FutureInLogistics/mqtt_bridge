@@ -4,5 +4,6 @@ string msg_type
 bool outgoing
 #http://wiki.ros.org/roscpp/Overview/Publishers%20and%20Subscribers#Publisher_Options
 bool latch
+string extern_clock
 ---
 bool success

@@ -83,7 +83,7 @@ def _on_disconnect(client, userdata, response_code):
     rospy.loginfo('MQTT disconnected')
 
 
-def _create_bridge_ext(msg_type, ros_topic, mqtt_topic, outgoing, latch=False, condition=None):
+def _create_bridge_ext(msg_type, ros_topic, mqtt_topic, outgoing,  extern_clock=None, latch=False, condition=None):
     try:
         if outgoing:
             bridge = create_bridge("mqtt_bridge.bridge:RosToMqttBridge", 
@@ -96,9 +96,10 @@ def _create_bridge_ext(msg_type, ros_topic, mqtt_topic, outgoing, latch=False, c
                 msg_type=msg_type, 
                 topic_from=mqtt_topic, 
                 topic_to=ros_topic,
-                latch=latch)
+                latch=latch,
+                sync_to_clock=extern_clock)
     except Exception as Err:
-        rospy.roserr(str(Err))
+        rospy.logerr(str(Err))
         return False
     else:
         bridges.append(bridge)
@@ -114,7 +115,8 @@ def _on_sync_topic(req):
 
     It supports no further arguments or options.
     """
-    return _create_bridge_ext(req.msg_type, req.ros_topic, req.mqtt_topic, req.outgoing)
+    return _create_bridge_ext(req.msg_type, req.ros_topic, req.mqtt_topic, req.outgoing, 
+        extern_clock=req.extern_clock)
     
 
 def _on_sync_transf(req):
@@ -128,7 +130,8 @@ def _on_sync_transf(req):
     at the broker/master to be sent to any future subscriber - therefore allowing async pub-sub, 
     which is required for static transforms.
     """
-    return _create_bridge_ext(req.msg_type, req.ros_topic, req.mqtt_topic, req.outgoing, latch=req.latch)
+    return _create_bridge_ext(req.msg_type, req.ros_topic, req.mqtt_topic, req.outgoing, latch=req.latch,
+            extern_clock=req.extern_clock)
 
 
 def _on_sync_transf_cond(req):
@@ -141,7 +144,9 @@ def _on_sync_transf_cond(req):
     In addition to 'latched' messages, it supports a condition, which frames should be published
     to the broker. Note that the condition is only supported for outgoing messages.
     """
-    return _create_bridge_ext(req.msg_type, req.ros_topic, req.mqtt_topic, req.outgoing, latch=req.latch, 
+    return _create_bridge_ext(req.msg_type, req.ros_topic, req.mqtt_topic, req.outgoing,
+        latch = req.latch, 
+        extern_clock = req.extern_clock,
         condition = lambda msg: all([tf.child_frame_id == req.child_frame_id for tf in msg.transforms])
     )
 
