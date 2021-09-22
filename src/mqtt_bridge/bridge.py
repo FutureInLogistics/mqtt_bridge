@@ -4,6 +4,7 @@ from typing import Optional, Type, Dict, Union
 import inject
 import paho.mqtt.client as mqtt
 import rospy
+import traceback
 
 from .util import lookup_object, extract_values, populate_instance
 
@@ -44,6 +45,8 @@ class RosToMqttBridge(Bridge):
     def __init__(self, topic_from: str, topic_to: str, msg_type: rospy.Message, frequency: Optional[float] = None,
                 latch : bool = False, condition = None):
         rospy.loginfo("Bridging ROS -> MQTT: " + topic_from + " ~~> " + topic_to)
+        if topic_from == "/clock":
+            frequency = 5.0
         self._topic_from = topic_from
         self._topic_to = self._extract_private_path(topic_to)
         self._latch = latch
@@ -67,7 +70,6 @@ class RosToMqttBridge(Bridge):
 
 class MqttToRosBridge(Bridge):
     """ Bridge from MQTT to ROS topic
-
     bridge MQTT messages on `topic_from` to ROS topic `topic_to`. MQTT messages will be converted to `msg_type`.
     """
 
@@ -81,16 +83,28 @@ class MqttToRosBridge(Bridge):
         self._queue_size = queue_size
         self._latch = latch
         self._last_published = rospy.get_time()
+        self._clock_diff = None
+        self._needs_clock_sync = sync_to_clock != None and len(sync_to_clock) > 0
         self._interval = None if frequency is None else 1.0 / frequency
         # Adding the correct topic to subscribe to
         self._mqtt_client.subscribe(self._topic_from)
         self._mqtt_client.message_callback_add(self._topic_from, self._callback_mqtt)
+
         self._publisher = rospy.Publisher(
             self._topic_to, self._msg_type, queue_size=self._queue_size, latch=self._latch)
-        self._clock_diff = None
+        
 
         # Clock syncing option
-        if sync_to_clock != None and len(sync_to_clock) > 0:
+        if self._needs_clock_sync:
+            rospy.loginfo("Adjusting timestamp for message on topic {} with extern clock {}".format(topic_to, sync_to_clock))
+
+            def _calc_clock_diff_ros(clock_msg):
+                self._clock_diff = rospy.Time.now() - clock_msg.clock
+                #rospy.loginfo("CLOCK SYNC on %s: Calculated extern clock offset of %u.%u",
+                #    self._topic_from,
+                #    self._clock_diff.secs,
+                #    self._clock_diff.nsecs)
+
             def _calc_clock_diff(client: mqtt.Client, userdata: Dict, mqtt_msg: mqtt.MQTTMessage):
                 #if self._clock_diff != None:
                 #    return
@@ -99,30 +113,41 @@ class MqttToRosBridge(Bridge):
                 clock_msg_type = lookup_object("rosgraph_msgs.msg:Clock")
                 clock_msg = self._create_ros_message(mqtt_msg, clock_msg_type)
                 self._clock_diff = rospy.Time.now() - clock_msg.clock
-                #rospy.loginfo("CLOCK SYNC: Calculated extern clock offset of %u.%u",
-                #    self._clock_diff.secs,
-                #    self._clock_diff.nsecs)
+                rospy.loginfo("CLOCK SYNC on %s: Calculated extern clock offset of %u.%u",
+                    self._topic_from,
+                    self._clock_diff.secs,
+                    self._clock_diff.nsecs)
 
                 # Getting the clock diff once is enough, so unsubscribe
                 #self._mqtt_client.unsubscribe(sync_to_clock)
 
             # Subscribe to clock of partner skid
-            self._mqtt_client.subscribe(sync_to_clock)
-            self._mqtt_client.message_callback_add(sync_to_clock, _calc_clock_diff)
+            #self._mqtt_client.subscribe(sync_to_clock)
+            #self._mqtt_client.message_callback_add(sync_to_clock, _calc_clock_diff)
+            clock_msg_type = lookup_object("rosgraph_msgs.msg:Clock")
+            rospy.Subscriber("/partner/clock", clock_msg_type, _calc_clock_diff_ros)
 
     def _callback_mqtt(self, client: mqtt.Client, userdata: Dict, mqtt_msg: mqtt.MQTTMessage):
         """ callback from MQTT """
         rospy.logdebug("MQTT received from {}".format(mqtt_msg.topic))
         now = rospy.get_time()
 
+        if self._needs_clock_sync and self._clock_diff is None:
+            #print("clock diff not arrived yet for %s" % mqtt_msg.topic)
+            return
+
         if self._interval is None or now - self._last_published >= self._interval:
             try:
                 ros_msg = self._create_ros_message(mqtt_msg, self._msg_type)
 
+                # Prevent publishing of invalid messages
+                if ros_msg is None:
+                    return
+
                 if self._topic_to == "/tf":
                     for i in range(len(ros_msg.transforms)):
                         if self._clock_diff != None:
-                            ros_msg.transforms[i].header.stamp += self._clock_diff + rospy.Duration.from_sec(0.01)
+                            ros_msg.transforms[i].header.stamp += self._clock_diff
 
                         # This transform needs to be inverted
                         original_parent = ros_msg.transforms[i].header.frame_id
@@ -133,20 +158,29 @@ class MqttToRosBridge(Bridge):
                 if self._clock_diff != None:
                     if hasattr(ros_msg, "header"):
                         ros_msg.header.stamp += self._clock_diff
+                        #rint("Updated stamp on %s" % mqtt_msg.topic)
 
                 self._publisher.publish(ros_msg)
                 self._last_published = now
             except Exception as e:
                 rospy.logerr(e)
+                traceback.print_exc()
 
     def _create_ros_message(self, mqtt_msg: mqtt.MQTTMessage, msg_type : Type[rospy.Message]) -> rospy.Message:
         """ create ROS message from MQTT payload """
         # Hack to enable both, messagepack and json deserialization.
         if self._serialize.__name__ == "packb":
             msg_dict = self._deserialize(mqtt_msg.payload, raw=False)
+            #rospy.loginfo(msg_dict)
         else:
             msg_dict = self._deserialize(mqtt_msg.payload)
-        return populate_instance(msg_dict, msg_type())
+        try:
+            ros_msg = populate_instance(msg_dict, msg_type())
+        except Exception as e:
+            rospy.logerr("Error while populating instance of {} : {}".format(msg_type, msg_dict))
+            return None
+        else:
+            return ros_msg
 
 
 __all__ = ['create_bridge', 'Bridge', 'RosToMqttBridge', 'MqttToRosBridge']
