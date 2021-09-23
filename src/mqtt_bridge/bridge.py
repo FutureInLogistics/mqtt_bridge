@@ -177,6 +177,7 @@ class MqttToRosBridge(Bridge):
         try:
             ros_msg = populate_instance(msg_dict, msg_type())
         except Exception as e:
+            rospy.logerr(e)
             rospy.logerr("Error while populating instance of {} : {}".format(msg_type, msg_dict))
             return None
         else:
