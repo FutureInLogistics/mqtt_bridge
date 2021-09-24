@@ -166,6 +166,13 @@ class MqttToRosBridge(Bridge):
                 rospy.logerr(e)
                 traceback.print_exc()
 
+    def fix_nans(self, msg_dict):
+        key = "ranges"
+        if key in msg_dict:
+            for i, val in enumerate(msg_dict[key]):
+                if val is None:
+                    msg_dict[key][i] = float("NaN")
+
     def _create_ros_message(self, mqtt_msg: mqtt.MQTTMessage, msg_type : Type[rospy.Message]) -> rospy.Message:
         """ create ROS message from MQTT payload """
         # Hack to enable both, messagepack and json deserialization.
@@ -174,9 +181,13 @@ class MqttToRosBridge(Bridge):
             #rospy.loginfo(msg_dict)
         else:
             msg_dict = self._deserialize(mqtt_msg.payload)
+    
+        self.fix_nans(msg_dict)
+
         try:
             ros_msg = populate_instance(msg_dict, msg_type())
         except Exception as e:
+            rospy.logerr(e)
             rospy.logerr("Error while populating instance of {} : {}".format(msg_type, msg_dict))
             return None
         else:
